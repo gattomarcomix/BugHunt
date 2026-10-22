@@ -1,0 +1,50 @@
+#include <stdio.h>
+int main(void)
+{
+    char s0[3] = "AB";
+    char *ca[1];
+    char **cp;
+    double d = 2.5;
+    double *da[1];
+    double **dp;
+    long long v = 1LL << 40;
+    long long *la[1];
+    long long **lp;
+    short sv = -5;
+    short *sa[1];
+    short **sp;
+    unsigned char u = 200;
+    unsigned char *ua[1];
+    unsigned char **up;
+    int iv = -9;
+    int *ia[1];
+    int **ip;
+    char *c1[1];
+    char **c2[1];
+    char ***c3;
+    double dd = 7.5;
+    double *d1[1];
+    double **d2[1];
+    double ***d3;
+    ca[0] = s0;
+    cp = ca;
+    da[0] = &d;
+    dp = da;
+    la[0] = &v;
+    lp = la;
+    sa[0] = &sv;
+    sp = sa;
+    ua[0] = &u;
+    up = ua;
+    ia[0] = &iv;
+    ip = ia;
+    c1[0] = s0;
+    c2[0] = c1;
+    c3 = c2;
+    d1[0] = &dd;
+    d2[0] = d1;
+    d3 = d2;
+    printf("%c %.2f %lld %d %u %d\n", **cp, **dp, **lp, **sp, **up, **ip);
+    printf("%c %.2f\n", ***c3, ***d3);
+    return 0;
+}
