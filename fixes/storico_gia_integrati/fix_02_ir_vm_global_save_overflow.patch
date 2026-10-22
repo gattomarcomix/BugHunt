@@ -1,0 +1,45 @@
+--- a/src/ir_vm.c
++++ b/src/ir_vm.c
+@@ -229,6 +229,15 @@
+     return V;
+ }
+ 
++/* Bytes actually owned by a scalar global's value: copying a whole 'union AnyValue' (152 bytes)
++ * over-reads/over-writes the 72-byte allocation of a small global (ASan heap-buffer-overflow). */
++static size_t VmGlobalBytes(const struct Value *V)
++{
++    size_t n = (V != NULL && V->Typ != NULL) ? (size_t)V->Typ->Sizeof : sizeof(long long);
++    if (n < 1 || n > sizeof(long long)) n = sizeof(long long);
++    return n;
++}
++
+ static void VmWriteGlobal(struct Value *V, long long nv)
+ {
+     switch (V->Typ->Base)
+@@ -256,7 +265,7 @@
+         {
+             if (VmProdGlobal[i] && VmProdGlobal[i]->Val)
+             {
+-                *VmProdGlobal[i]->Val = VmProdGlobalSave[i];
++                memcpy(VmProdGlobal[i]->Val, &VmProdGlobalSave[i], VmGlobalBytes(VmProdGlobal[i]));
+                 VmProdGlobal[i]->IsInitialized = (char)VmProdGlobalInit[i];
+             }
+             VmProdGlobal[i] = NULL;
+@@ -1306,7 +1315,7 @@
+             if (!(VmProdGlobalDirty & (1u << gi)))
+             {
+                 VmProdGlobal[gi] = V;
+-                VmProdGlobalSave[gi] = *V->Val;
++                memcpy(&VmProdGlobalSave[gi], V->Val, VmGlobalBytes(V));
+                 VmProdGlobalInit[gi] = (unsigned char)V->IsInitialized;
+                 VmProdGlobalDirty |= 1u << gi;
+             }
+@@ -1323,7 +1332,7 @@
+             if (!(VmProdGlobalDirty & (1u << gi)))
+             {
+                 VmProdGlobal[gi] = V;
+-                VmProdGlobalSave[gi] = *V->Val;
++                memcpy(&VmProdGlobalSave[gi], V->Val, VmGlobalBytes(V));
+                 VmProdGlobalInit[gi] = (unsigned char)V->IsInitialized;
+                 VmProdGlobalDirty |= 1u << gi;
+             }

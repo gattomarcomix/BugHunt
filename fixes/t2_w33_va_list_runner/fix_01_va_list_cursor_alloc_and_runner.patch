@@ -1,0 +1,49 @@
+--- a/src/cstdlib_ext/stdarg.c
++++ b/src/cstdlib_ext/stdarg.c
+@@ -29,11 +29,16 @@
+     return StdargMacroNone;
+ }
+ 
++/* va_list is an opaque struct of sizeof(FILE) bytes (cstdlib/stdio.c) and a struct assignment (e.g. the
++ * va_copy macro) copies that many bytes from the cursor block. Allocate at least that much, otherwise the copy
++ * reads past the block (ASan heap-buffer-overflow: 176-byte cursor vs 216-byte va_list). */
++#define BABYC_VA_CURSOR_ALLOC ((int)(sizeof(struct BabyCVaCursor) > sizeof(FILE) ? sizeof(struct BabyCVaCursor) : sizeof(FILE)))
++
+ static struct BabyCVaCursor *StdargCursorNew(struct ParseState *Parser,
+     struct StackFrame *Frame, IrCallFrame *IrFrame)
+ {
+     struct BabyCVaCursor *Cursor = (struct BabyCVaCursor *)HeapAllocMem(
+-        Parser->pc, (int)sizeof(*Cursor));
++        Parser->pc, BABYC_VA_CURSOR_ALLOC);
+     if (Cursor == NULL) ProgramFail(Parser, "out of memory creating va_list");
+     Cursor->Frame = Frame;
+     Cursor->IrFrame = IrFrame;
+@@ -304,7 +309,7 @@
+     if (N == 1)
+     {
+         Source = StdargCursorFromValue(Parser, Param[0]);
+-        Copy = (struct BabyCVaCursor *)HeapAllocMem(Parser->pc, (int)sizeof(*Copy));
++        Copy = (struct BabyCVaCursor *)HeapAllocMem(Parser->pc, BABYC_VA_CURSOR_ALLOC);
+         if (Copy == NULL) ProgramFail(Parser, "out of memory copying va_list");
+         *Copy = *Source;
+         if (RV == NULL || RV->Val == NULL) ProgramFail(Parser, "invalid va_copy result");
+@@ -317,7 +322,7 @@
+     Source = (struct BabyCVaCursor *)(*(struct BabyCVaCursor **)Param[1]->Val);
+     if (Source == NULL || !Source->Active)
+         ProgramFail(Parser, "va_list is not active");
+-    Copy = (struct BabyCVaCursor *)HeapAllocMem(Parser->pc, (int)sizeof(*Copy));
++    Copy = (struct BabyCVaCursor *)HeapAllocMem(Parser->pc, BABYC_VA_CURSOR_ALLOC);
+     if (Copy == NULL) ProgramFail(Parser, "out of memory copying va_list");
+     *Copy = *Source;
+     Param[0]->Val->Pointer = Copy;
+--- a/tools/run_suite.py
++++ b/tools/run_suite.py
+@@ -93,7 +93,7 @@
+     if 'analyze' in c:
+         args.append('--analyze')
+     args.append(c)
+-    if c.startswith('032_args') or c.startswith('078_args_double_ptr'):
++    if c.startswith('032_args') or c.startswith('078_args_double_ptr') or c.startswith('1066_args_') or c.startswith('1068_args_'):
+         args += ['-', 'arg1', 'arg2', 'arg3', 'arg4']
+     try:
+         r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=(35 if c == "283_bigblock_bodyir.c" else 20))

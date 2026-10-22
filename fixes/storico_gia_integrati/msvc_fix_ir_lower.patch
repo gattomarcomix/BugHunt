@@ -1,0 +1,219 @@
+--- ir_lower.orig.c	2026-10-09 20:35:25.751279003 +0000
++++ ir_lower.c	2026-10-09 20:39:26.180172633 +0000
+@@ -5061,8 +5061,8 @@
+     nn = CS->N;
+     ip = 0;
+     steps = 0;
+-#if defined(__GNUC__)
+     {
++#if defined(__GNUC__) && !defined(BABYC_LIGHT_SWITCH)
+         static void *const jt[] = {
+             [0] = &&L_default,
+             [IrLinImm] = &&L_Imm,
+@@ -5092,6 +5092,36 @@
+         if (nn > 0)
+             goto *jt[(unsigned)C[0].Op < sizeof(jt)/sizeof(jt[0]) && jt[C[0].Op] ? C[0].Op : 0];
+         goto L_done;
++#else
++        /* Portable dispatch (MSVC/clang-cl/other): same handlers, switch+goto instead of computed goto. */
++#define LIGHT_NEXT() goto L_dispatch
++        if (nn <= 0)
++            goto L_done;
++        L_dispatch:
++        if (ip < 0 || ip >= nn || ++steps >= 500000000)
++            goto L_done;
++        switch ((unsigned)C[ip].Op)
++        {
++        case IrLinImm: goto L_Imm;
++        case IrLinLoadLocal: goto L_LoadLocal;
++        case IrLinStoreLocal: goto L_StoreLocal;
++        case IrLinBin: goto L_Bin;
++        case IrLinUnary: goto L_Unary;
++        case IrLinJmp: goto L_Jmp;
++        case IrLinBrZ: goto L_BrZ;
++        case IrLinRet: goto L_Ret;
++        case IrLinLoadGlobal: goto L_LoadG;
++        case IrLinStoreGlobal: goto L_StoreG;
++        case IrLinLine: goto L_Line;
++        case IrLinCall: goto L_Call;
++        case IrLinIncG: goto L_IncG;
++        case IrLinAddI: goto L_AddI;
++        case IrLinAddLocal: goto L_AddLocal;
++        case IrLinAddStoreLocal: goto L_AddStoreLocal;
++        case IrLinCopyIndex: goto L_CopyIndex;
++        default: goto L_default;
++        }
++#endif
+         L_Imm: {
+             const IrLinInst *In = &C[ip];
+             /* Tok 2/3: Imm is slot into live LinWideImm (per-FnCode install). */
+@@ -5336,169 +5366,6 @@
+         L_done: ;
+ #undef LIGHT_NEXT
+     }
+-#else
+-    for (ip = 0, steps = 0; ip >= 0 && ip < nn && steps < 500000000; steps++)
+-    {
+-        const IrLinInst *In = &C[ip];
+-        switch (In->Op)
+-        {
+-        case IrLinImm:
+-            if ((In->Tok == 2 || In->Tok == 3) && In->Imm >= 0
+-                && In->Imm < IR_LIN_STMT_MAX && LinWideOn[In->Imm])
+-                LR[In->Dest] = LinWideImm[In->Imm];
+-            else
+-                LR[In->Dest] = In->Imm;
+-            ip++; break;
+-        case IrLinLoadLocal:
+-            if (In->Imm < 0) {
+-                int ps = (int)(-(In->Imm + 1));
+-                LR[In->Dest] = (ps >= 0 && ps < IR_CALL_MAX_PARAMS) ? LightParam[lsp][ps] : 0;
+-            } else if (In->Imm >= 0 && In->Imm < nloc)
+-                LR[In->Dest] = LLoc[In->Imm];
+-            else LR[In->Dest] = 0;
+-            ip++; break;
+-        case IrLinStoreLocal:
+-            if (In->Imm < 0) {
+-                int ps = (int)(-(In->Imm + 1));
+-                if (ps >= 0 && ps < IR_CALL_MAX_PARAMS) LightParam[lsp][ps] = LR[In->A];
+-            } else if (In->Imm >= 0 && In->Imm < nloc)
+-                LLoc[In->Imm] = LR[In->A];
+-            ip++; break;
+-        case IrLinBin: {
+-            long long a = LR[In->A], b = LR[In->B], r = 0;
+-            switch (In->Tok) {
+-            case TokenPlus: r = a + b; break;
+-            case TokenMinus: r = a - b; break;
+-            case TokenAsterisk: r = a * b; break;
+-            case TokenSlash: r = b ? a / b : 0; break;
+-            case TokenModulus: r = b ? a % b : 0; break;
+-            case TokenEqual: r = (a == b); break;
+-            case TokenNotEqual: r = (a != b); break;
+-            case TokenLessThan: r = (a < b); break;
+-            case TokenGreaterThan: r = (a > b); break;
+-            case TokenLessEqual: r = (a <= b); break;
+-            case TokenGreaterEqual: r = (a >= b); break;
+-            case TokenAmpersand: r = a & b; break;
+-            case TokenArithmeticOr: r = a | b; break;
+-            case TokenArithmeticExor: r = a ^ b; break;
+-            case TokenShiftLeft:
+-                if (In->Imm & IR_LIN_F_UNSIGNED)
+-                    r = (long long)((unsigned long long)a << (unsigned)(b & 63));
+-                else r = a << (b & 63);
+-                break;
+-            case TokenShiftRight:
+-                if (In->Imm & IR_LIN_F_UNSIGNED)
+-                    r = (long long)((unsigned long long)a >> (unsigned)(b & 63));
+-                else r = a >> (b & 63);
+-                break;
+-            default: r = 0; break;
+-            }
+-            LR[In->Dest] = r; ip++; break;
+-        }
+-        case IrLinUnary:
+-            if (In->Tok == TokenMinus) LR[In->Dest] = -LR[In->A];
+-            else if (In->Tok == TokenUnaryNot) LR[In->Dest] = !LR[In->A];
+-            else if (In->Tok == TokenUnaryExor) LR[In->Dest] = ~LR[In->A];
+-            else LR[In->Dest] = LR[In->A];
+-            ip++; break;
+-        case IrLinBrZ: if (!LR[In->A]) ip = (int)In->Imm; else ip++; break;
+-        case IrLinJmp: ip = (int)In->Imm; break;
+-        case IrLinRet: local_ret = LR[In->A]; ip = -1; break;
+-        case IrLinLine: ip++; break;
+-        case IrLinIncG: {
+-            int g = (int)In->Imm;
+-            if (g >= 0 && g < 32 && GlobRaw[g]) (*GlobRaw[g])++;
+-            ip++; break;
+-        }
+-        case IrLinAddI: LR[In->Dest] = LR[In->A] + In->Imm; ip++; break;
+-        case IrLinCopyIndex:
+-            if (!LinExecIndexCopy(In, R, Locals, NLocals, Ip)) (*Ip)++;
+-            break;
+-        case IrLinAddStoreLocal:
+-        {
+-            int slot = (int)In->A;
+-            if (slot >= 0 && slot < IR_CALL_MAX_LOCALS && IrUninitChecksOn()
+-                && LinParser != NULL && IrCallDepth > 0) {
+-                IrCallFrame *Chk = IrCallStack[IrCallDepth - 1];
+-                if (!Chk->LocalIsPtr[slot] && Chk->LocalArraySize[slot] <= 0
+-                    && !Chk->LocalInit[slot]) {
+-                    if (Chk->LocalName[slot]) ParserSetCaretOnIdent(LinParser, Chk->LocalName[slot]);
+-                    ProgramFail(LinParser, "uninitialized variable '%s'",
+-                        Chk->LocalName[slot] ? Chk->LocalName[slot] : "?");
+-                }
+-            }
+-            long long raw = (slot >= 0 && slot < NLocals ? Locals[slot] : 0) + R[In->B];
+-            long long sv = raw;
+-            if (slot >= 0 && slot < NLocals && IrCallDepth > 0 && slot < IR_CALL_MAX_LOCALS)
+-            {
+-                IrCallFrame *Fr = IrCallStack[IrCallDepth - 1];
+-                struct ValueType *LT = Fr->LocalFromType[slot] ? Fr->LocalFromType[slot] : Fr->LocalTyp[slot];
+-                if (LT != NULL && LT->Base == TypeInt) sv = (long long)(int)sv;
+-                else if (LT != NULL && LT->Base == TypeUnsignedInt) sv = (long long)(unsigned int)sv;
+-                Fr->LocalVal[slot] = sv;
+-                Fr->LocalInit[slot] = 1;
+-            }
+-            if (slot >= 0 && slot < NLocals) Locals[slot] = sv;
+-            R[In->Dest] = raw;
+-            if (In->Dest < IR_LIN_REGS) LinRegU[In->Dest] = 0;
+-            (*Ip)++;
+-            break;
+-        }
+-        case IrLinAddLocal: {
+-            int s = (int)In->A;
+-            if (s >= 0 && s < LIGHT_LOCALS && LightSp > 0) {
+-                LightLocal[LightSp-1][s] += In->Imm;
+-                if (s < 64) LightInitMask[LightSp-1] |= (1ULL << s);
+-                LR[In->Dest] = LightLocal[LightSp-1][s];
+-                if (s < nloc) LLoc[s] = LightLocal[LightSp-1][s];
+-            } else if (s >= 0 && s < nloc) {
+-                LLoc[s] += In->Imm;
+-                LR[In->Dest] = LLoc[s];
+-            } else LR[In->Dest] = 0;
+-            ip++; break;
+-        }
+-        case IrLinCall: {
+-            int ci = (int)In->Imm, na, ai, nsp;
+-            struct Value *FV;
+-            long long args[IR_LIN_CALL_ARGS];
+-            na = (ci >= 0 && ci < CallN) ? CallArgN[ci] : 0;
+-            FV = (ci >= 0 && ci < CallN) ? CallFnTab[ci] : NULL;
+-            for (ai = 0; ai < na && ai < IR_LIN_CALL_ARGS; ai++)
+-                args[ai] = LR[CallArgReg[ci][ai]];
+-            if (FV && CS->Func == FV && LightSp < LIGHT_MAX) {
+-                nsp = LightSp;
+-                for (ai = 0; ai < na && ai < IR_CALL_MAX_PARAMS; ai++)
+-                    LightParam[nsp][ai] = args[ai];
+-                LightSp = nsp + 1;
+-                if (IdxN > 0 || IdxDirty)
+-                {
+-                    IdxRunSave irs;
+-                    IdxRunPush(&irs);
+-                    LR[In->Dest] = LightRunBody(CS, nsp);
+-                    IdxRunPop(&irs);
+-                }
+-                else
+-                    LR[In->Dest] = LightRunBody(CS, nsp);
+-                LightSp = nsp;
+-                ip++;
+-            } else
+-                Step(In, LR, LLoc, nloc, &ip);
+-            break;
+-        }
+-        case IrLinLoadGlobal: {
+-            int g = (int)In->Imm;
+-            LR[In->Dest] = (g >= 0 && g < 32 && GlobRaw[g]) ? *GlobRaw[g] : 0;
+-            ip++; break;
+-        }
+-        case IrLinStoreGlobal: {
+-            int g = (int)In->Imm;
+-            if (g >= 0 && g < 32 && GlobRaw[g]) *GlobRaw[g] = LR[In->A];
+-            ip++; break;
+-        }
+-        default: Step(In, LR, LLoc, nloc, &ip); break;
+-        }
+-    }
+-#endif
+     BabycLinInstExec += (unsigned long long)steps;
+     return local_ret;
+ }

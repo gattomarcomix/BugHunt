@@ -1,0 +1,83 @@
+--- a/src/ir_mem.c
++++ b/src/ir_mem.c
+@@ -700,6 +700,53 @@
+         ProgramFail(Parser, DiagnosticMsgArrayIndexOutOfBoundsSized, (int)Idx, Dim);
+ }
+ 
++/* Declared type of a local/global root identifier after applying Levels dereferences (NULL if unknown).
++ * LocalFromType is already one dereference down (pointee or element type). Parameters carry no type here. */
++static struct ValueType *IrDeclTypeAfterDerefs(struct ParseState *Parser, IrExpr *Root, int Levels)
++{
++    struct ValueType *T = NULL;
++    int i;
++    if (Root == NULL || Levels < 1)
++        return NULL;
++    if (Root->LocalSlot >= 0)
++    {
++        if (IrCallDepth <= 0 || Root->LocalSlot >= IR_CALL_MAX_LOCALS)
++            return NULL;
++        T = IrCallStack[IrCallDepth - 1]->LocalFromType[Root->LocalSlot];
++        Levels -= 1;
++    }
++    else if (Root->ParamSlot < 0 && Root->Ident != NULL)
++    {
++        struct Value *GV = IrGlobalValSoft(Parser, Root);
++        T = GV != NULL ? GV->Typ : NULL;
++    }
++    else
++        return NULL;
++    for (i = 0; T != NULL && i < Levels; i++)
++    {
++        if (T->Base != TypePointer && T->Base != TypeArray)
++            return NULL;
++        T = T->FromType;
++    }
++    return T;
++}
++
++static int IrBaseLoadableByPtrElem(int B)
++{
++    switch (B)
++    {
++    case TypeChar: case TypeUnsignedChar: case TypeShort: case TypeUnsignedShort:
++    case TypeInt: case TypeUnsignedInt: case TypeLong: case TypeUnsignedLong:
++    case TypeLongLong: case TypeUnsignedLongLong: case TypePointer:
++#ifndef NO_FP
++    case TypeFP:
++#endif
++        return 1;
++    default:
++        return 0;
++    }
++}
++
+ int IrResolvePtr(struct ParseState *Parser, IrExpr *Base,
+                         void **AddrOut, int *ElemBaseOut, int *ElemSizeOut)
+ {
+@@ -874,8 +921,24 @@
+         /* load pointer word at InnerAddr */
+         Addr = *(void **)InnerAddr;
+         if (AddrOut) *AddrOut = Addr;
+-        if (ElemBaseOut) *ElemBaseOut = TypeInt;
+-        if (ElemSizeOut) *ElemSizeOut = (int)sizeof(int);
++        {   /* the final load must use the declared pointee type, not a hard-coded int */
++            int Levels = 0, eb = TypeInt, es = (int)sizeof(int);
++            IrExpr *Rt = Base;
++            struct ValueType *Tf;
++            while (Rt != NULL && Rt->Kind == IrExUnary && Rt->Op == TokenAsterisk)
++            {
++                Levels++;
++                Rt = Rt->Left;
++            }
++            Tf = (Rt != NULL && Rt->Kind == IrExIdent) ? IrDeclTypeAfterDerefs(Parser, Rt, Levels + 1) : NULL;
++            if (Tf != NULL && Tf->Sizeof > 0 && IrBaseLoadableByPtrElem(Tf->Base))
++            {
++                eb = Tf->Base;
++                es = (int)Tf->Sizeof;
++            }
++            if (ElemBaseOut) *ElemBaseOut = eb;
++            if (ElemSizeOut) *ElemSizeOut = es;
++        }
+         return Addr != NULL;
+     }
+ 

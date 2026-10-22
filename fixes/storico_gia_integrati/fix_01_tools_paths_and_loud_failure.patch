@@ -1,0 +1,128 @@
+--- a/tools/test_string_scan_fastpath.py
++++ b/tools/test_string_scan_fastpath.py
+@@ -13,7 +13,7 @@
+ import tempfile
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent.parent
+-SOURCES = (ROOT / "bench" / "string_proc.c", ROOT / "bench" / "string_proc_v2.c")
++SOURCES = (ROOT / "bench" / "cases" / "micro" / "string_scan.c", ROOT / "bench" / "cases" / "micro" / "string_scan_bounded.c")
+ 
+ 
+ def run(argv, env, timeout=30):
+--- a/tools/bench_string_scan_fastpath.py
++++ b/tools/bench_string_scan_fastpath.py
+@@ -10,7 +10,7 @@
+ import time
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent.parent
+-SOURCES = (ROOT / "bench" / "string_proc.c", ROOT / "bench" / "string_proc_v2.c")
++SOURCES = (ROOT / "bench" / "cases" / "micro" / "string_scan.c", ROOT / "bench" / "cases" / "micro" / "string_scan_bounded.c")
+ 
+ 
+ def run(argv, env, timeout=30):
+--- a/tools/bench_isort_fastpath.py
++++ b/tools/bench_isort_fastpath.py
+@@ -14,7 +14,7 @@
+ import time
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent.parent
+-SOURCE = ROOT / "bench" / "isort_v2.c"
++SOURCE = ROOT / "bench" / "cases" / "micro" / "isort_decoy.c"
+ 
+ 
+ def run(argv, env, timeout=30):
+--- a/src/tools/gate_shared.py
++++ b/src/tools/gate_shared.py
+@@ -41,11 +41,11 @@
+ }
+ 
+ BENCHES = [
+-    ('sieve', 'bench/serie1/sieve.c'),
+-    ('fibc', 'bench/serie1/fibc.c'),
+-    ('list_walk', 'bench/list_walk.c'),
+-    ('array_sum', 'bench/array_sum.c'),
+-    ('isort', 'bench/isort.c'),
++    ('sieve', 'bench/cases/classic/sieve.c'),
++    ('fibc', 'bench/cases/classic/fib_rec_count.c'),
++    ('list_walk', 'bench/cases/micro/list_walk.c'),
++    ('array_sum', 'bench/cases/micro/array_sum.c'),
++    ('isort', 'bench/cases/micro/isort.c'),
+ ]
+ 
+ def run(cmd, env=None, timeout=60):
+@@ -131,7 +131,7 @@
+     return 'hard_fail 0' in out or 'hard_fail=0' in out or True
+ 
+ def callgrind():
+-    sieve = os.path.join(ROOT, 'bench/serie1/sieve.c')
++    sieve = os.path.join(ROOT, 'bench/cases/classic/sieve.c')
+     if not os.path.isfile(sieve):
+         print('CALLGRIND skip')
+         return
+--- a/src/tools/perf_gate.py
++++ b/src/tools/perf_gate.py
+@@ -23,14 +23,16 @@
+ 
+ HERE = Path(__file__).resolve().parent
+ ROOT = HERE.parent
+-BENCH_SERIE1 = ROOT.parent / "bench" / "serie1"
+-BENCH_ROOT = ROOT.parent / "bench"
++BENCH_SERIE1 = ROOT.parent / "bench" / "cases" / "classic"   # was bench/serie1 (moved by the bench reorganization)
++BENCH_ROOT = ROOT.parent / "bench" / "cases" / "micro"        # was bench/*.c
+ PROGS = ["fibc", "isort", "structs", "sieve", "collatz", "tri", "matmul"]
++PROG_FILE = {"fibc": "fib_rec_count"}                          # name in the new layout
++MISSING = []
+ MICRO = [
+     ("isort_micro", BENCH_ROOT / "isort.c", BENCH_ROOT / "isort.py"),
+-    ("isort_v2", BENCH_ROOT / "isort_v2.c", None),
+-    ("string_proc", BENCH_ROOT / "string_proc.c", BENCH_ROOT / "string_proc.py"),
+-    ("string_proc_v2", BENCH_ROOT / "string_proc_v2.c", None),
++    ("isort_v2", BENCH_ROOT / "isort_decoy.c", None),
++    ("string_proc", BENCH_ROOT / "string_scan.c", BENCH_ROOT / "string_scan.py"),
++    ("string_proc_v2", BENCH_ROOT / "string_scan_bounded.c", None),
+ ]
+ TOL = float(os.environ.get("BABYC_PERF_TOL", "0.05"))
+ N = int(os.environ.get("BABYC_PERF_RUNS", "3"))
+@@ -79,7 +81,7 @@
+ 
+ 
+ def find_py(name):
+-    p = BENCH_SERIE1 / (name + ".py")
++    p = BENCH_SERIE1 / (PROG_FILE.get(name, name) + ".py")
+     return p if p.is_file() else None
+ 
+ 
+@@ -149,17 +151,21 @@
+ 
+     if BENCH_SERIE1.is_dir():
+         for p in PROGS:
+-            src = BENCH_SERIE1 / (p + ".c")
++            src = BENCH_SERIE1 / (PROG_FILE.get(p, p) + ".c")
+             if src.is_file():
+                 one(p, src, find_py(p))
+             else:
+-                print("%-14s skip" % p)
++                print("%-14s MISSING: %s" % (p, src))
++                MISSING.append(str(src))
+ 
+     if not args.no_micro:
+         print("--- micro (shape-sensitive: expect ast_acc≈vm_acc << *_noa) ---")
+         for name, csrc, pysrc in MICRO:
+             if csrc.is_file():
+                 one(name, csrc, pysrc)
++            else:
++                print("%-14s MISSING: %s" % (name, csrc))
++                MISSING.append(str(csrc))
+ 
+     # ratios summary
+     print()
+@@ -215,6 +221,9 @@
+             print("  %-14s %+6.1f%% %s" % (p, d * 100, flag))
+         if args.strict and rc:
+             return 1
++    if MISSING:
++        print("perf_gate: %d program(s) not found -> nothing measured for them (FAIL)" % len(MISSING))
++        return 2
+     return 0
+ 
+ 

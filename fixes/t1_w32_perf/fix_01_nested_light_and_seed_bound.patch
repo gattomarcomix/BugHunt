@@ -1,0 +1,93 @@
+--- a/src/ir_fncode.h
++++ b/src/ir_fncode.h
+@@ -23,6 +23,7 @@
+     signed char MonoElig; /* -1 unk, 0 no, 1 IrMono shape */
+     signed char MemoElig; /* -1 unk, 0 no, 1 pure memo */
+     signed char PtrIndexedElig; /* -1 unk, 0 tree fallback, 1 direct p[i] safe */
++    signed char NestedLightSafe; /* 0 unknown, 1 safe, -1 unsafe: callee may use the light path at IrCallDepth>0 */
+     IrLinInst Code[IR_LIN_STMT_MAX];
+     int CallN;
+     struct Value *CallFnTab[IR_LIN_CALL_SLOTS];
+--- a/src/ir_lin_compile.c
++++ b/src/ir_lin_compile.c
+@@ -1900,6 +1900,7 @@
+         S->MonoElig = -1;
+         S->MemoElig = -1;
+         S->PtrIndexedElig = -1;
++        S->NestedLightSafe = 0;
+         S->Func = Func;
+     }
+     if (Func != NULL && S->Func == NULL)
+--- a/src/ir_lin_exec.c
++++ b/src/ir_lin_exec.c
+@@ -13,6 +13,8 @@
+ #include <stdlib.h>
+ #include <stdint.h>
+ 
++static int IrFnCodeNestedLightSafe(FnCodeSlot *CS);
++
+ extern struct ParseState *LinParser;
+ extern unsigned char LinRegU[IR_LIN_REGS];
+ extern int LinStepAbort;
+@@ -2428,7 +2430,7 @@
+                          * address/member operations.  Do not use that shortcut
+                          * for nested calls: a callee local with the same slot
+                          * number must never alias its caller's LocalVal. */
+-                        && IrCallDepth == 0
++                        && (IrCallDepth == 0 || IrFnCodeNestedLightSafe(CS))
+                         && LightSp < LIGHT_MAX
+                         && CS->N <= 128
+                         && !CS->HasArrayKernel
+@@ -3650,6 +3652,39 @@
+ }
+ 
+ 
++/* P0-perf: the light path was disabled for ALL nested calls (IrCallDepth > 0) to stop a callee local
++ * aliasing its caller's slot (216). That forced every nested call through a full IrCallFrame push.
++ * A callee that touches no local slot (params only, native light ops only) cannot alias anything,
++ * so it may still use the light path. Cached per slot (0 unknown). */
++static int IrFnCodeNestedLightSafe(FnCodeSlot *CS)
++{
++    int i;
++    if (CS->NestedLightSafe != 0)
++        return CS->NestedLightSafe > 0;
++    CS->NestedLightSafe = 1;
++    for (i = 0; i < CS->N && CS->NestedLightSafe > 0; i++)
++    {
++        const IrLinInst *In = &CS->Code[i];
++        switch (In->Op)
++        {
++        case IrLinImm:
++            if (In->Tok == 4) CS->NestedLightSafe = -1; /* address of a local */
++            break;
++        case IrLinBin: case IrLinUnary: case IrLinJmp: case IrLinBrZ: case IrLinRet:
++        case IrLinLoadGlobal: case IrLinStoreGlobal: case IrLinLine: case IrLinCall:
++        case IrLinIncG: case IrLinAddI:
++            break;
++        case IrLinLoadLocal: case IrLinStoreLocal:
++            if (In->Imm >= 0) CS->NestedLightSafe = -1; /* real local slot */
++            break;
++        default:
++            CS->NestedLightSafe = -1;
++            break;
++        }
++    }
++    return CS->NestedLightSafe > 0;
++}
++
+ int IrExecLinLocals(const IrLinInst *Code, int N, long long *Locals, int NLocals)
+ {
+     long long R[IR_LIN_REGS];
+--- a/src/ir_storage.c
++++ b/src/ir_storage.c
+@@ -280,7 +280,9 @@
+     int si;
+     if (Fr == NULL || CS == NULL)
+         return;
+-    for (si = 0; si < IR_CALL_MAX_LOCALS; si++)
++    int si_max = CS->MaxLocal + 1;
++    if (si_max > IR_CALL_MAX_LOCALS) si_max = IR_CALL_MAX_LOCALS;
++    for (si = 0; si < si_max; si++)
+     {
+         int flags;
+         IrStorageDesc D;

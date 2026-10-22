@@ -1,0 +1,10 @@
+--- a/src/ir_lower.c	2026-10-10 07:29:04.000000000 +0000
++++ b/src/ir_lower.c	2026-10-10 08:25:20.699561740 +0000
+@@ -5207,6 +5207,7 @@
+         if (i + 2 < N
+             && (Code[i].Op == IrLinLoadLocal || Code[i].Op == IrLinLoadGlobal)
+             && Code[i+1].Op == IrLinImm
++            && Code[i+1].Tok < 2 /* wide (2/3) and local-address (4) immediates are slot indices, not values */
+             && Code[i+2].Op == IrLinBin
+             && (Code[i+2].Tok == TokenPlus || Code[i+2].Tok == TokenMinus)
+             && Code[i+2].A == Code[i].Dest && Code[i+2].B == Code[i+1].Dest)
